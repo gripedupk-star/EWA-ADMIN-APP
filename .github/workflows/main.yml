@@ -1,0 +1,99 @@
+name: Build EWA Admin Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "android-admin/**"
+      - ".github/workflows/android.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build EWA Admin v0.7.0
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 35
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      # google-services.json should NOT be committed publicly.
+      # Add its complete JSON contents as a GitHub Repository Secret:
+      # FIREBASE_GOOGLE_SERVICES_JSON
+      - name: Create Firebase google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.FIREBASE_GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "ERROR: FIREBASE_GOOGLE_SERVICES_JSON secret is missing."
+            exit 1
+          fi
+
+          printf '%s' "$GOOGLE_SERVICES_JSON" > android-admin/app/google-services.json
+
+          echo "Firebase configuration created."
+          test -s android-admin/app/google-services.json
+
+      - name: Make Gradle wrapper executable
+        working-directory: android-admin
+        run: |
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+          fi
+
+      - name: Build Debug APK
+        working-directory: android-admin
+        run: |
+          if [ -f "./gradlew" ]; then
+            ./gradlew clean assembleDebug --stacktrace
+          else
+            echo "Gradle wrapper not found. Using installed Gradle."
+            gradle clean assembleDebug --stacktrace
+          fi
+
+      - name: Verify APK
+        run: |
+          APK="android-admin/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
+          echo "APK successfully generated:"
+          ls -lh "$APK"
+
+      - name: Rename APK
+        run: |
+          mkdir -p release
+          cp \
+            android-admin/app/build/outputs/apk/debug/app-debug.apk \
+            release/EWA-Admin-v0.7.0-debug.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: EWA-Admin-v0.7.0-APK
+          path: release/EWA-Admin-v0.7.0-debug.apk
+          if-no-files-found: error
+          retention-days: 30
